@@ -1,0 +1,16 @@
+[Unit]
+Description=USD/INR Telegram Rate Alert Bot
+After=network-online.target
+Wants=network-online.target
+
+[Service]
+Type=simple
+User=YOUR_LINUX_USER
+WorkingDirectory=/opt/usdinr-alert
+EnvironmentFile=/opt/usdinr-alert/.env
+ExecStart=/opt/usdinr-alert/venv/bin/python3 /opt/usdinr-alert/usdinr_alert.py
+Restart=always
+RestartSec=15
+
+[Install]
+WantedBy=multi-user.target
