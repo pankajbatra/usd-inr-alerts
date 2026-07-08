@@ -94,3 +94,25 @@ tail -f /opt/usdinr-alert/usdinr_alert.log
   lose your progress or cause a duplicate/missed alert logic reset.
 - **Timezone**: uses `Asia/Kolkata` via Python's `zoneinfo` — no dependency
   on the VPS's system timezone.
+
+## Claude Raw Prompt
+
+This has been created completely using Claude with the following raw prompt:
+
+```
+I want a utility script which sends me a Telegram message whenever the USD to INR conversion rate goes higher than a defined value (e.g. 95.5) anytime between 9:30 am and 3:30 pm IST, Monday to Friday.
+It can fetch the rate every 1 or 2 minutes during this time period.
+
+I have signed up for TwelveData and got the API key
+This HTTP GET URL gives a JSON response and conversion rate: https://api.twelvedata.com/exchange_rate?symbol=USD/INR&apikey=<TWELVEDATA_API_KEY>
+
+I have a VPS on DigitalOcean. I can deploy this utility on that, so that it keeps running in the background and sends me alerts on Telegram
+
+Script won't send a telegram message if the rate is the same or lower than the rate for which an alert was already sent on the day.
+Say, the defined rate is 95.5 and in the morning, the starting rate is 94.8; no alert is sent.
+rate reaches this level at 10:30 AM, script sends a telegram message that the rate is now 95.5
+At 10:35, it reaches 95.6, then the script again sends a telegram message that the rate is now 95.6
+Now, if the rate drops to 95.55, then the script DO NOT send a telegram message. Now it will only send when the rate crosses the day's high of 95.6
+
+Also, how can I set this defined value at the start of the day? Can I send a message on Telegram to set it? Say today I want the alert on a rate greater than 95.5, tomorrow on 94.5.
+```
