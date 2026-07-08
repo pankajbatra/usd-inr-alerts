@@ -44,7 +44,7 @@ every new day instead of carrying over.
 - Visit `https://api.telegram.org/bot<YOUR_TOKEN>/getUpdates` in a browser.
 - Find `"chat":{"id": 123456789, ...}` — that number is your `TELEGRAM_CHAT_ID`.
 
-### 3. Deploy to your DigitalOcean VPS
+### 3. Deploy to your VPS
 ```bash
 ssh you@your-vps-ip
 sudo mkdir -p /opt/usdinr-alert
