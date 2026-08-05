@@ -110,6 +110,9 @@ tail -f /opt/usdinr-alert/usdinr_alert.log
   lose your progress or cause a duplicate/missed alert logic reset.
 - **Timezone**: uses `Asia/Kolkata` via Python's `zoneinfo` — no dependency
   on the VPS's system timezone.
+- **Log rotation**: `usdinr_alert.log` rotates weekly (Monday midnight) so it
+  never grows unbounded. `LOG_BACKUP_COUNT` (default `1`) sets how many old
+  weeks to keep; set it to `0` to clear the log each week with no history.
 
 ## Claude Raw Prompt
 

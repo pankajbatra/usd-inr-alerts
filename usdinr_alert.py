@@ -22,6 +22,7 @@ import json
 import math
 import time
 import logging
+import logging.handlers
 import signal
 from datetime import datetime, time as dtime
 from zoneinfo import ZoneInfo
@@ -39,6 +40,9 @@ DEFAULT_THRESHOLD = float(os.environ.get("DEFAULT_THRESHOLD", "95.5"))
 DEFAULT_LOW_THRESHOLD = float(os.environ.get("DEFAULT_LOW_THRESHOLD", "0"))  # 0 = disabled
 
 POLL_INTERVAL_SECONDS = int(os.environ.get("POLL_INTERVAL_SECONDS", "90"))  # 1.5 min default
+
+# How many weekly rotated log files to keep (0 = clear weekly, keep no history)
+LOG_BACKUP_COUNT = int(os.environ.get("LOG_BACKUP_COUNT", "1"))
 TELEGRAM_POLL_TIMEOUT = int(os.environ.get("TELEGRAM_POLL_TIMEOUT", "20"))  # long-poll seconds
 
 IST = ZoneInfo("Asia/Kolkata")
@@ -53,10 +57,17 @@ TELEGRAM_API = f"https://api.telegram.org/bot{TELEGRAM_BOT_TOKEN}"
 
 # ---------- Logging ----------
 
+# Rotate the log file weekly (Monday midnight) so it doesn't grow unbounded.
+# backupCount controls how many old weeks to keep; with LOG_BACKUP_COUNT=1 the
+# previous week is kept as usdinr_alert.log.<date> and older ones are deleted.
+_file_handler = logging.handlers.TimedRotatingFileHandler(
+    LOG_FILE, when="W0", interval=1, backupCount=LOG_BACKUP_COUNT
+)
+
 logging.basicConfig(
     level=logging.INFO,
     format="%(asctime)s [%(levelname)s] %(message)s",
-    handlers=[logging.FileHandler(LOG_FILE), logging.StreamHandler(sys.stdout)],
+    handlers=[_file_handler, logging.StreamHandler(sys.stdout)],
 )
 log = logging.getLogger("usdinr_alert")
 
