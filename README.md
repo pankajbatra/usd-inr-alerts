@@ -1,32 +1,48 @@
 # USD/INR Telegram Rate Alert
 
 Monitors USD/INR via Twelve Data, Mon–Fri 9:30 AM–3:30 PM IST, and sends a
-Telegram message whenever the rate crosses above your threshold — but only
-on **new highs**, not on every poll and not on drops-then-recovers-to-same-level.
+Telegram message whenever the rate crosses above your high threshold (on **new
+highs**) or below your low threshold (on **new lows**) — not on every poll and
+not on revisits of a level already alerted.
 
 ## How the alert logic works
 
-- Each day tracks a `threshold` and `alerted_high` (starts at `None`).
-- If `rate > threshold` AND (`alerted_high` is `None` OR `rate > alerted_high`):
-  send alert, set `alerted_high = rate`.
+- Each day tracks a `threshold` (high) and `alerted_high`, plus a
+  `low_threshold` and `alerted_low` (all start at `None`/day-reset).
+- High: if `rate > threshold` AND (`alerted_high` is `None` OR `rate` has
+  reached the **next 0.1 band** above the last alert): send alert, set
+  `alerted_high = rate`.
+- Low: if `low_threshold` is set (non-zero) AND `rate < low_threshold` AND
+  (`alerted_low` is `None` OR `rate` has reached the **next 0.1 band** below
+  the last alert): send alert, set `alerted_low = rate`.
 - Otherwise: stay silent.
-- `alerted_high` resets automatically each new IST calendar day.
-- `threshold` persists across days (so if you don't set a new one, yesterday's
-  stays active) — falls back to `DEFAULT_THRESHOLD` only if never set.
+- **0.1-band gating**: re-alerts ignore moves in the second decimal. A rate's
+  band is `floor(rate*10)/10` (e.g. 96.6047 and 96.6887 are both the 96.6
+  band). After a high alert in the 96.6 band, the next high alert needs
+  `rate >= 96.7`; after a low alert in the 94.3 band, the next needs
+  `rate <= 94.2`. The first alert of the day still fires as soon as the
+  threshold is crossed, regardless of band.
+- `alerted_high` and `alerted_low` reset automatically each new IST calendar day.
+- Thresholds persist across days (so if you don't set new ones, yesterday's
+  stay active) — fall back to `DEFAULT_THRESHOLD` / `DEFAULT_LOW_THRESHOLD`
+  only if never set. `DEFAULT_LOW_THRESHOLD=0` disables low alerts.
 
-Example matching your spec: threshold 95.5, rate hits 95.5 → alert. Rises to
-95.6 → alert. Drops to 95.55 → silent (below day's high of 95.6). Rises to
-95.65 → alert (new high).
+Example: high threshold 95.5 — rate first crosses at 96.6047 → alert; rises to
+96.6187 or 96.6887 → silent (same 96.6 band); rises to 96.71 → alert (reached
+96.7 band). Low threshold 94 — rate first drops to 94.3877 → alert; dips to
+94.35 or 94.31 → silent (same 94.3 band); drops to 94.19 → alert (reached 94.2
+band).
 
-## Setting the threshold via Telegram
+## Setting the thresholds via Telegram
 
 Message your bot any time:
 ```
-/set 95.5
+/set 95.5      # high threshold (or just send a bare number like 95.5)
+/setlow 94     # low threshold (0 disables low alerts)
 ```
-or just `95.5`. It replies with confirmation and resets the day's "alerted
-high" so the new threshold takes effect cleanly. Also supports `/status` to
-check current threshold and day's high.
+It replies with confirmation and resets that side's day progress so the new
+threshold takes effect cleanly. Also supports `/status` to check current
+thresholds and the day's alerted high/low.
 
 You don't have to send this every day — if you don't, the previous value
 carries over. If you want a hard requirement to set it fresh each morning,

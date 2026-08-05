@@ -19,6 +19,7 @@ Config is via environment variables (see .env.example / README).
 import os
 import sys
 import json
+import math
 import time
 import logging
 import signal
@@ -33,8 +34,9 @@ TWELVEDATA_API_KEY = os.environ["TWELVEDATA_API_KEY"]
 TELEGRAM_BOT_TOKEN = os.environ["TELEGRAM_BOT_TOKEN"]
 TELEGRAM_CHAT_ID = os.environ["TELEGRAM_CHAT_ID"]  # your chat id, as string
 
-# Default threshold used if none set yet today (can be overridden via Telegram /set)
+# Default thresholds used if none set yet today (can be overridden via Telegram /set, /setlow)
 DEFAULT_THRESHOLD = float(os.environ.get("DEFAULT_THRESHOLD", "95.5"))
+DEFAULT_LOW_THRESHOLD = float(os.environ.get("DEFAULT_LOW_THRESHOLD", "0"))  # 0 = disabled
 
 POLL_INTERVAL_SECONDS = int(os.environ.get("POLL_INTERVAL_SECONDS", "90"))  # 1.5 min default
 TELEGRAM_POLL_TIMEOUT = int(os.environ.get("TELEGRAM_POLL_TIMEOUT", "20"))  # long-poll seconds
@@ -62,9 +64,11 @@ log = logging.getLogger("usdinr_alert")
 
 def load_state():
     default = {
-        "date": None,          # ISO date string, IST, for which threshold/high apply
+        "date": None,          # ISO date string, IST, for which thresholds/high/low apply
         "threshold": DEFAULT_THRESHOLD,
+        "low_threshold": DEFAULT_LOW_THRESHOLD,  # alert when rate drops below this (0 = disabled)
         "alerted_high": None,  # highest rate already alerted today (None = no alert sent yet)
+        "alerted_low": None,   # lowest rate already alerted today (None = no alert sent yet)
         "last_update_id": 0,   # telegram getUpdates offset
     }
     if os.path.exists(STATE_FILE):
@@ -95,9 +99,10 @@ def ensure_today(state):
     case we fall back to DEFAULT_THRESHOLD."""
     today = today_ist_str()
     if state["date"] != today:
-        log.info("New trading day detected (%s). Resetting day's alerted high.", today)
+        log.info("New trading day detected (%s). Resetting day's alerted high/low.", today)
         state["date"] = today
         state["alerted_high"] = None
+        state["alerted_low"] = None
         # Keep whatever threshold was last set; if you want a fresh default
         # each day instead, uncomment the next line:
         # state["threshold"] = DEFAULT_THRESHOLD
@@ -151,8 +156,22 @@ def poll_telegram_commands(state):
             log.info("Ignoring message from unauthorized chat_id=%s", chat_id)
             continue
 
-        new_threshold = parse_set_command(text)
-        if new_threshold is not None:
+        new_low = parse_setlow_command(text)
+        new_threshold = None if new_low is not None else parse_set_command(text)
+        if new_low is not None:
+            state = ensure_today(state)
+            state["low_threshold"] = new_low
+            state["alerted_low"] = None  # new low threshold => reset today's low alert progress
+            save_state(state)
+            if new_low > 0:
+                send_telegram_message(
+                    f"✅ Low threshold set to {new_low} for {state['date']}. "
+                    f"You'll be alerted when USD/INR drops below this."
+                )
+            else:
+                send_telegram_message(f"✅ Low-threshold alerts disabled for {state['date']}.")
+            log.info("Low threshold updated via Telegram to %s", new_low)
+        elif new_threshold is not None:
             state = ensure_today(state)
             state["threshold"] = new_threshold
             state["alerted_high"] = None  # new threshold => reset today's alert progress
@@ -167,8 +186,9 @@ def poll_telegram_commands(state):
         elif text.startswith("/"):
             send_telegram_message(
                 "Commands:\n"
-                "/set <rate>  e.g. /set 95.5\n"
-                "/status      show current threshold & day's high"
+                "/set <rate>     high threshold, e.g. /set 95.5\n"
+                "/setlow <rate>  low threshold, e.g. /setlow 94 (0 to disable)\n"
+                "/status         show current thresholds & day's high/low"
             )
 
     return state
@@ -193,11 +213,33 @@ def parse_set_command(text):
     return None
 
 
+def parse_setlow_command(text):
+    """Accepts '/setlow 94' or 'setlow 94'. A value of 0 disables low alerts."""
+    text = text.strip()
+    lowered = text.lower()
+    if lowered.startswith("/setlow"):
+        rest = text[7:].strip()
+    elif lowered.startswith("setlow"):
+        rest = text[6:].strip()
+    else:
+        return None
+    try:
+        value = float(rest)
+        if value == 0 or (30 <= value <= 200):  # 0 disables; else sanity bound for USD/INR
+            return value
+    except ValueError:
+        pass
+    return None
+
+
 def send_status(state):
+    low = state.get("low_threshold", 0)
     send_telegram_message(
         f"📊 Status ({state['date']}):\n"
-        f"Threshold: {state['threshold']}\n"
-        f"Day's alerted high: {state['alerted_high'] if state['alerted_high'] is not None else 'none yet'}"
+        f"High threshold: {state['threshold']}\n"
+        f"Low threshold: {low if low else 'disabled'}\n"
+        f"Day's alerted high: {state['alerted_high'] if state['alerted_high'] is not None else 'none yet'}\n"
+        f"Day's alerted low: {state['alerted_low'] if state['alerted_low'] is not None else 'none yet'}"
     )
 
 
@@ -211,6 +253,26 @@ def fetch_usdinr_rate():
     if "rate" not in data:
         raise ValueError(f"Unexpected response from Twelve Data: {data}")
     return float(data["rate"])
+
+
+# ---------- Alert-band helpers ----------
+#
+# We only re-alert when the new extreme reaches the NEXT 0.1 band, not on tiny
+# moves in the second decimal. The band of a rate is floor(rate*10)/10, e.g.
+# 96.6047 and 96.6887 both sit in the 96.6 band. After alerting inside the 96.6
+# band, the next high alert requires rate >= 96.7; the next low alert (from,
+# say, a 94.3 band) requires rate <= 94.2.
+
+def _band_tenths(rate):
+    return math.floor(rate * 10 + 1e-9)  # integer number of 0.1 units, float-safe
+
+
+def next_high_needed(alerted_high):
+    return (_band_tenths(alerted_high) + 1) / 10.0
+
+
+def next_low_needed(alerted_low):
+    return (_band_tenths(alerted_low) - 1) / 10.0
 
 
 # ---------- Market hours check ----------
@@ -242,9 +304,12 @@ def main():
 
     log.info("USD/INR alert bot started. Threshold=%s, poll interval=%ss",
               state["threshold"], POLL_INTERVAL_SECONDS)
+    low_threshold = state.get("low_threshold", 0)
     send_telegram_message(
-        f"🤖 USD/INR alert bot started.\nCurrent threshold: {state['threshold']}\n"
-        f"Send /set <rate> anytime to change it."
+        f"🤖 USD/INR alert bot started.\n"
+        f"High threshold: {state['threshold']}\n"
+        f"Low threshold: {low_threshold if low_threshold else 'disabled'}\n"
+        f"Send /set <rate> or /setlow <rate> anytime to change them."
     )
 
     last_rate_check = 0
@@ -271,15 +336,25 @@ def main():
             log.error("Failed to fetch rate: %s", e)
             continue
 
-        log.info("USD/INR = %s (threshold=%s, alerted_high=%s)",
-                  rate, state["threshold"], state["alerted_high"])
+        low_threshold = state.get("low_threshold", 0)
+        log.info("USD/INR = %s (threshold=%s, low_threshold=%s, alerted_high=%s, alerted_low=%s)",
+                  rate, state["threshold"], low_threshold,
+                  state["alerted_high"], state["alerted_low"])
 
         if rate > state["threshold"]:
-            if state["alerted_high"] is None or rate > state["alerted_high"]:
+            if state["alerted_high"] is None or rate >= next_high_needed(state["alerted_high"]):
                 send_telegram_message(
-                    f"🚨 USD/INR is now {rate:.4f} (threshold {state['threshold']})"
+                    f"🚨 USD/INR is now {rate:.4f} (above threshold {state['threshold']})"
                 )
                 state["alerted_high"] = rate
+                save_state(state)
+
+        if low_threshold and rate < low_threshold:
+            if state["alerted_low"] is None or rate <= next_low_needed(state["alerted_low"]):
+                send_telegram_message(
+                    f"🔻 USD/INR is now {rate:.4f} (below threshold {low_threshold})"
+                )
+                state["alerted_low"] = rate
                 save_state(state)
 
     log.info("Shutdown complete.")

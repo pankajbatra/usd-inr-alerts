@@ -2,3 +2,6 @@
 state.json
 usdinr_alert.log
 venv/
+
+.DS_Store
+__pycache__/
