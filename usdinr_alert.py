@@ -268,22 +268,15 @@ def fetch_usdinr_rate():
 
 # ---------- Alert-band helpers ----------
 #
-# We only re-alert when the new extreme reaches the NEXT 0.1 band, not on tiny
-# moves in the second decimal. The band of a rate is floor(rate*10)/10, e.g.
-# 96.6047 and 96.6887 both sit in the 96.6 band. After alerting inside the 96.6
-# band, the next high alert requires rate >= 96.7; the next low alert (from,
-# say, a 94.3 band) requires rate <= 94.2.
+# We only re-alert when the new extreme moves into a different 0.1 band, not on
+# tiny moves in the second decimal. The band of a rate is floor(rate*10), e.g.
+# 96.6047 and 96.6887 both sit in band 966 (96.6). After a high alert in band
+# 966, the next high alert needs the rate to reach a higher band (>= 96.7);
+# after a low alert in band 952 (95.2), the next low alert needs a lower band
+# (< 95.2, i.e. any 95.1xx or below).
 
 def _band_tenths(rate):
     return math.floor(rate * 10 + 1e-9)  # integer number of 0.1 units, float-safe
-
-
-def next_high_needed(alerted_high):
-    return (_band_tenths(alerted_high) + 1) / 10.0
-
-
-def next_low_needed(alerted_low):
-    return (_band_tenths(alerted_low) - 1) / 10.0
 
 
 # ---------- Market hours check ----------
@@ -353,7 +346,8 @@ def main():
                   state["alerted_high"], state["alerted_low"])
 
         if rate > state["threshold"]:
-            if state["alerted_high"] is None or rate >= next_high_needed(state["alerted_high"]):
+            if state["alerted_high"] is None or \
+                    _band_tenths(rate) > _band_tenths(state["alerted_high"]):
                 send_telegram_message(
                     f"🚨 USD/INR is now {rate:.4f} (above threshold {state['threshold']})"
                 )
@@ -361,7 +355,8 @@ def main():
                 save_state(state)
 
         if low_threshold and rate < low_threshold:
-            if state["alerted_low"] is None or rate <= next_low_needed(state["alerted_low"]):
+            if state["alerted_low"] is None or \
+                    _band_tenths(rate) < _band_tenths(state["alerted_low"]):
                 send_telegram_message(
                     f"🔻 USD/INR is now {rate:.4f} (below threshold {low_threshold})"
                 )
