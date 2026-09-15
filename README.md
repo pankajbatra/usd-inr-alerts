@@ -16,23 +16,24 @@ not on revisits of a level already alerted.
   (`alerted_low` is `None` OR `rate` has reached the **next 0.1 band** below
   the last alert): send alert, set `alerted_low = rate`.
 - Otherwise: stay silent.
-- **0.1-band gating**: re-alerts ignore moves in the second decimal. A rate's
-  band is `floor(rate*10)` (e.g. 96.6047 and 96.6887 are both band 96.6). A
-  re-alert fires only when the rate moves into a different band — a *higher*
-  band for highs, a *lower* band for lows. So after a high alert in band 96.6
-  the next needs `rate >= 96.7`; after a low alert in band 95.2 the next needs
-  the rate to drop below 95.2 (any 95.1xx or lower). The first alert of the day
-  still fires as soon as the threshold is crossed, regardless of band.
+- **Band gating**: re-alerts ignore sub-band wiggles. A rate's band is
+  `floor(rate / ALERT_GAP)`, where `ALERT_GAP` defaults to `0.05` (5 paise), so
+  96.6047 and 96.6287 are both the 96.60 band. A re-alert fires only when the
+  rate moves into a different band — a *higher* band for highs, a *lower* band
+  for lows. So after a high alert in band 96.60 the next needs `rate >= 96.65`;
+  after a low alert in band 95.20 the next needs the rate to drop below 95.20
+  (any 95.15–95.19x or lower). The first alert of the day still fires as soon as
+  the threshold is crossed, regardless of band.
 - `alerted_high` and `alerted_low` reset automatically each new IST calendar day.
 - Thresholds persist across days (so if you don't set new ones, yesterday's
   stay active) — fall back to `DEFAULT_THRESHOLD` / `DEFAULT_LOW_THRESHOLD`
   only if never set. `DEFAULT_LOW_THRESHOLD=0` disables low alerts.
 
-Example: high threshold 95.5 — rate first crosses at 96.6047 → alert; rises to
-96.6187 or 96.6887 → silent (same 96.6 band); rises to 96.71 → alert (reached
-96.7 band). Low threshold 94 — rate first drops to 94.3877 → alert; dips to
-94.35 or 94.31 → silent (same 94.3 band); drops to 94.19 → alert (moved into
-the 94.1 band).
+Example (`ALERT_GAP=0.05`): high threshold 95.5 — rate first crosses at
+96.6047 → alert; rises to 96.62 or 96.6487 → silent (same 96.60 band); rises to
+96.65 → alert (reached 96.65 band). Low threshold 94 — rate first drops to
+94.3877 → alert; dips to 94.37 or 94.355 → silent (same 94.35 band); drops to
+94.34 → alert (moved into the 94.30 band).
 
 ## Setting the thresholds via Telegram
 
